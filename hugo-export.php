@@ -28,7 +28,8 @@ class Hugo_Export
 {
     protected $_tempDir = null;
     private $zip_folder = 'hugo-export/'; //folder zip file extracts to
-    private $post_folder = '_posts/'; //folder to place posts within
+    private $post_folder = 'posts/'; //folder to place posts within
+	private $comment_folder = 'comment/'; //folder to place posts within
 
     public $rename_options = array('site', 'blog'); //strings to strip from option keys on export
 
@@ -50,7 +51,6 @@ class Hugo_Export
      */
     function __construct()
     {
-
         add_action('admin_menu', array(&$this, 'register_menu'));
         add_action('current_screen', array(&$this, 'callback'));
     }
@@ -60,7 +60,6 @@ class Hugo_Export
      */
     function callback()
     {
-
         if (get_current_screen()->id != 'export')
             return;
 
@@ -79,7 +78,6 @@ class Hugo_Export
      */
     function register_menu()
     {
-
         add_management_page(__('Export to Hugo', 'hugo-export'), __('Export to Hugo', 'hugo-export'), 'manage_options', 'export.php?type=hugo');
     }
 
@@ -117,6 +115,7 @@ class Hugo_Export
             'author' => get_userdata($post->post_author)->display_name,
             'layout' => get_post_type($post),
             'date'   => $this->_getPostDate($post),
+	        'type'   => $post->ID,
         );
         if (false === empty($post->post_excerpt)) {
             $output['excerpt'] = $post->post_excerpt;
@@ -139,6 +138,20 @@ class Hugo_Export
 
         return $output;
     }
+	
+	function convert_comment_meta($comment)
+	{
+		$output = array(
+            'date'  =>  $comment->comment_date,
+            'author'  =>  $comment->comment_author,
+			'author_email'  =>  $comment->comment_author_email,
+			'author_url'  =>  $comment->comment_author_url,
+			'author_ip'  =>  $comment->comment_author_IP,
+			'type'  =>  $comment->comment_post_ID,
+        );
+		
+		return $output;
+	}
 
     protected function _isEmpty($value)
     {
@@ -197,7 +210,6 @@ class Hugo_Export
      */
     function convert_content($post)
     {
-
         $content   = apply_filters('the_content', $post->post_content);
         $converter = new Markdownify\ConverterExtra;
         $markdown  = $converter->parseString($content);
@@ -234,9 +246,45 @@ class Hugo_Export
             $output .= "---\n";
             $output .= $this->convert_content($post);
             $this->write($output, $post);
+			
+            write_comments($post);
         }
     }
+	function write_comments($post)
+	{
+		$comments = get_comments( array( 'number' => 2, 'post_id' => $post->ID ) );
+			
+			global $wp_filesystem;
+			
+			$post_md_file_name = date('Y-m-d', strtotime($post->post_date)) . '-' . $post->post_name;
+			$post_comment_folder_path = $this->dir . $this->comment_folder . '\\' . $post_md_file_name;						
+			
+			$wp_filesystem->mkdir($post_comment_folder_path);
+							
+			foreach($comments as $comm){
+				$comment_meta = $this->convert_comment_meta($comm);
+				$comment_output = Spyc::YAMLDump($comment_meta, false, 0);
+				$output .= "---\n";
+				$comment_output .= $this->convert_comment($comm);
+				
+				$filename = $post_comment_folder_path . '\\' . $comm->comment_ID . '.md'; 
+				$wp_filesystem->put_contents($filename, $comment_output);
+			}
+	}
+    function convert_comment($comment)
+    {
+        $content   = $comment->comment_content;
+        $converter = new Markdownify\ConverterExtra;
+        $markdown  = $converter->parseString($content);
 
+        if (false !== strpos($markdown, '[]: ')) {
+            // faulty links; return plain HTML
+            return $content;
+        }
+
+        return $markdown;
+    }
+	
     function filesystem_method_filter()
     {
         return 'direct';
@@ -275,12 +323,13 @@ class Hugo_Export
         $this->dir = $this->getTempDir() . 'wp-hugo-' . md5(time()) . '/';
         $this->zip = $this->getTempDir() . 'wp-hugo.zip';
         $wp_filesystem->mkdir($this->dir);
+		$wp_filesystem->mkdir($this->dir . $this->comment_folder);
         $wp_filesystem->mkdir($this->dir . $this->post_folder);
-        $wp_filesystem->mkdir($this->dir . 'wp-content/');
-
+		
+		
         $this->convert_options();
         $this->convert_posts();
-        $this->convert_uploads();
+
         $this->zip();
         $this->send();
         $this->cleanup();
@@ -327,6 +376,7 @@ class Hugo_Export
         $wp_filesystem->put_contents($this->dir . '_config.yml', $output);
     }
 
+	
     /**
      * Write file to temp dir
      */
@@ -438,12 +488,6 @@ class Hugo_Export
         $array        = array_combine($keys, $array);
     }
 
-    function convert_uploads()
-    {
-
-        $upload_dir = wp_upload_dir();
-        $this->copy_recursive($upload_dir['basedir'], $this->dir . str_replace(trailingslashit(get_home_url()), '', $upload_dir['baseurl']));
-    }
 
     /**
      * Copy a file, or recursively copy a folder and its contents
