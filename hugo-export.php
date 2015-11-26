@@ -141,8 +141,10 @@ class Hugo_Export
 	
 	function convert_comment_meta($comment)
 	{
+		$unixTime = strtotime($comment->comment_date_gmt );
+        
 		$output = array(
-            'date'  =>  $comment->comment_date,
+            'date'  =>  date('Y-m-d', $unixTime),
             'author'  =>  $comment->comment_author,
 			'author_email'  =>  $comment->comment_author_email,
 			'author_url'  =>  $comment->comment_author_url,
@@ -247,7 +249,7 @@ class Hugo_Export
             $output .= $this->convert_content($post);
             $this->write($output, $post);
 			
-            write_comments($post);
+            $this->write_comments($post);
         }
     }
 	function write_comments($post)
@@ -264,7 +266,7 @@ class Hugo_Export
 			foreach($comments as $comm){
 				$comment_meta = $this->convert_comment_meta($comm);
 				$comment_output = Spyc::YAMLDump($comment_meta, false, 0);
-				$output .= "---\n";
+				$comment_output .= "---\n";
 				$comment_output .= $this->convert_comment($comm);
 				
 				$filename = $post_comment_folder_path . '\\' . $comm->comment_ID . '.md'; 
